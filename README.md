@@ -1,9 +1,9 @@
 # local-k8s-vagrant
-Local k8s cluster with Vagrant
+Local k8s cluster with Vagrant based on ubuntu/bionic64
 
 # Usage
 
-$ ssh https://github.com/ajalewis/local-k8s-vagrant.git
+$ git clone https://github.com/ajalewis/local-k8s-vagrant.git
 
 $ cd local-k8s-vagrant
 
