@@ -1,97 +1,68 @@
-# -*- mode: ruby -*-
-# vi:set ft=ruby sw=2 ts=2 sts=2:
+set -e
+IFNAME=$1
+ADDRESS="$(ip -4 addr show $IFNAME | grep "inet" | head -1 |awk '{print $2}' | cut -d/ -f1)"
+sed -e "s/^.*${HOSTNAME}.*/${ADDRESS} ${HOSTNAME} ${HOSTNAME}.local/" -i /etc/hosts
 
-# Define the number of master and worker nodes
-# If this number is changed, remember to update setup-hosts.sh script with the new hosts IP details in /etc/hosts of each VM.
-NUM_MASTER_NODE = 1
-NUM_WORKER_NODE = 2
+# remove ubuntu-bionic entry
+sed -e '/^.*ubuntu-bionic.*/d' -i /etc/hosts
 
-IP_NW = "192.168.56."
-MASTER_IP_START = 1
-NODE_IP_START = 2
+# Update /etc/hosts about other hosts
+cat >> /etc/hosts <<EOF
+192.168.56.2  master-ashworth
+192.168.56.3  node01-ashworth
+192.168.56.4  node02-ashworth
+EOF
 
-# All Vagrant configuration is done below. The "2" in Vagrant.configure
-# configures the configuration version (we support older styles for
-# backwards compatibility). Please don't change it unless you know what
-# you're doing.
-Vagrant.configure("2") do |config|
-  # The most common configuration options are documented and commented below.
-  # For a complete reference, please see the online documentation at
-  # https://docs.vagrantup.com.
+# Update TZ
+sudo timedatectl set-timezone 'Australia/Brisbane'
 
-  # Every Vagrant development environment requires a box. You can search for
-  # boxes at https://vagrantcloud.com/search.
-  # config.vm.box = "base"
-  config.vm.box = "ubuntu/bionic64"
+# Remove unneccessary MOTD addons
+sudo chmod -x /etc/update-motd.d/00-header /etc/update-motd.d/10-help-text
 
-  # Disable automatic box update checking. If you disable this, then
-  # boxes will only be checked for updates when the user runs
-  # `vagrant box outdated`. This is not recommended.
-  config.vm.box_check_update = false
+# Set iptables to bridged
 
-  # Create a public network, which generally matched to bridged network.
-  # Bridged networks make the machine appear as another physical device on
-  # your network.
-  # config.vm.network "public_network"
+sudo modprobe br_netfilter
 
-  # Share an additional folder to the guest VM. The first argument is
-  # the path on the host to the actual folder. The second argument is
-  # the path on the guest to mount the folder. And the optional third
-  # argument is a set of non-required options.
-  # config.vm.synced_folder "../data", "/vagrant_data"
+cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+br_netfilter
+EOF
 
-  # Provider-specific configuration so you can fine-tune various
-  # backing providers for Vagrant. These expose provider-specific options.
-  # Example for VirtualBox:
-  #
-  # config.vm.provider "virtualbox" do |vb|
-  #   # Customize the amount of memory on the VM:
-  #   vb.memory = "1024"
-  # end
-  #
-  # View the documentation for the provider you are using for more
-  # information on available options.
+cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-ip6tables = 1
+net.bridge.bridge-nf-call-iptables = 1
+EOF
 
-  # Provision Master Nodes
-  (1..NUM_MASTER_NODE).each do |i|
-      config.vm.define "master-ashworth" do |node|
-        # Name shown in the GUI
-        node.vm.provider "virtualbox" do |vb|
-            vb.name = "master-ashworth"
-            vb.memory = 2048
-            vb.cpus = 2
-        end
-        node.vm.hostname = "master-ashworth"
-        node.vm.network :private_network, ip: IP_NW + "#{MASTER_IP_START + i}"
-        node.vm.network "forwarded_port", guest: 22, host: "#{2710 + i}"
+sudo sysctl --system
 
-        node.vm.provision "setup-hosts", :type => "shell", :path => "scripts/setup-hosts.sh" do |s|
-          s.args = ["enp0s8"]
-        end
+# Install docker run time
 
-        node.vm.provision "setup-dns", type: "shell", :path => "scripts/update-dns.sh"
+sudo apt-get update && sudo apt-get install ca-certificates curl gnupg lsb-release apt-transport-https -y
 
-      end
-  end
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
 
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-  # Provision Worker Nodes
-  (1..NUM_WORKER_NODE).each do |i|
-    config.vm.define "node0#{i}-ashworth" do |node|
-        node.vm.provider "virtualbox" do |vb|
-            vb.name = "node0#{i}-ashworth"
-            vb.memory = 2048
-            vb.cpus = 2
-        end
-        node.vm.hostname = "node0#{i}-ashworth"
-        node.vm.network :private_network, ip: IP_NW + "#{NODE_IP_START + i}"
-                node.vm.network "forwarded_port", guest: 22, host: "#{2720 + i}"
+sudo apt-get update && sudo apt-get install docker-ce docker-ce-cli containerd.io -y
 
-        node.vm.provision "setup-hosts", :type => "shell", :path => "scripts/setup-hosts.sh" do |s|
-          s.args = ["enp0s8"]
-        end
+# Configure docker daemon
 
-        node.vm.provision "setup-dns", type: "shell", :path => "scripts/update-dns.sh"
-    end
-  end
-end
+cat <<EOF | sudo tee /etc/docker/daemon.json
+{
+  "exec-opts": ["native.cgroupdriver=systemd"],
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "100m"
+  },
+  "storage-driver": "overlay2"
+}
+EOF
+
+sudo systemctl enable docker
+sudo systemctl daemon-reload
+sudo systemctl restart docker
+
+# Install kubeadm kubectl kubelet
+
+sudo curl -fsSLo /usr/share/keyrings/kubernetes-archive-keyring.gpg https://packages.cloud.google.com/apt/doc/apt-key.gpg
+echo "deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list
+sudo apt-get update && sudo apt-get install kubelet kubeadm kubectl -y && sudo apt-mark hold kubelet kubeadm kubectl
