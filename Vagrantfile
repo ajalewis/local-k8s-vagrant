@@ -1,65 +1,97 @@
-#!/bin/bash
+# -*- mode: ruby -*-
+# vi:set ft=ruby sw=2 ts=2 sts=2:
 
-# remove ubuntu-bionic entry
-sed -e '/^.*ubuntu-bionic.*/d' -i /etc/hosts
+# Define the number of master and worker nodes
+# If this number is changed, remember to update setup-hosts.sh script with the new hosts IP details in /etc/hosts of each VM.
+NUM_MASTER_NODE = 1
+NUM_WORKER_NODE = 2
 
-# Update /etc/hosts about other hosts
-cat >> /etc/hosts <<EOF
-192.168.56.2  master-ashworth
-192.168.56.3  node01-ashworth
-192.168.56.4  node02-ashworth
-EOF
+IP_NW = "192.168.56."
+MASTER_IP_START = 1
+NODE_IP_START = 2
 
-# Update TZ
-sudo timedatectl set-timezone 'Australia/Brisbane'
+# All Vagrant configuration is done below. The "2" in Vagrant.configure
+# configures the configuration version (we support older styles for
+# backwards compatibility). Please don't change it unless you know what
+# you're doing.
+Vagrant.configure("2") do |config|
+  # The most common configuration options are documented and commented below.
+  # For a complete reference, please see the online documentation at
+  # https://docs.vagrantup.com.
 
-# Remove unneccessary MOTD addons
-sudo chmod -x /etc/update-motd.d/00-header /etc/update-motd.d/10-help-text
+  # Every Vagrant development environment requires a box. You can search for
+  # boxes at https://vagrantcloud.com/search.
+  # config.vm.box = "base"
+  config.vm.box = "ubuntu/bionic64"
 
-# Set iptables to bridged
+  # Disable automatic box update checking. If you disable this, then
+  # boxes will only be checked for updates when the user runs
+  # `vagrant box outdated`. This is not recommended.
+  config.vm.box_check_update = false
 
-sudo modprobe br_netfilter
+  # Create a public network, which generally matched to bridged network.
+  # Bridged networks make the machine appear as another physical device on
+  # your network.
+  # config.vm.network "public_network"
 
-cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
-br_netfilter
-EOF
+  # Share an additional folder to the guest VM. The first argument is
+  # the path on the host to the actual folder. The second argument is
+  # the path on the guest to mount the folder. And the optional third
+  # argument is a set of non-required options.
+  # config.vm.synced_folder "../data", "/vagrant_data"
 
-cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
-net.bridge.bridge-nf-call-ip6tables = 1
-net.bridge.bridge-nf-call-iptables = 1
-EOF
+  # Provider-specific configuration so you can fine-tune various
+  # backing providers for Vagrant. These expose provider-specific options.
+  # Example for VirtualBox:
+  #
+  # config.vm.provider "virtualbox" do |vb|
+  #   # Customize the amount of memory on the VM:
+  #   vb.memory = "1024"
+  # end
+  #
+  # View the documentation for the provider you are using for more
+  # information on available options.
 
-sudo sysctl --system
+  # Provision Master Nodes
+  (1..NUM_MASTER_NODE).each do |i|
+      config.vm.define "kubemaster" do |node|
+        # Name shown in the GUI
+        node.vm.provider "virtualbox" do |vb|
+            vb.name = "kubemaster"
+            vb.memory = 2048
+            vb.cpus = 2
+        end
+        node.vm.hostname = "kubemaster"
+        node.vm.network :private_network, ip: IP_NW + "#{MASTER_IP_START + i}"
+        node.vm.network "forwarded_port", guest: 22, host: "#{2710 + i}"
 
-# Install docker run time
+        node.vm.provision "setup-hosts", :type => "shell", :path => "ubuntu/vagrant/setup-hosts.sh" do |s|
+          s.args = ["enp0s8"]
+        end
 
-sudo apt-get update && sudo apt-get install ca-certificates curl gnupg lsb-release apt-transport-https -y
+        node.vm.provision "setup-dns", type: "shell", :path => "ubuntu/update-dns.sh"
 
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+      end
+  end
 
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-sudo apt-get update && sudo apt-get install docker-ce docker-ce-cli containerd.io -y
+  # Provision Worker Nodes
+  (1..NUM_WORKER_NODE).each do |i|
+    config.vm.define "kubenode0#{i}" do |node|
+        node.vm.provider "virtualbox" do |vb|
+            vb.name = "kubenode0#{i}"
+            vb.memory = 2048
+            vb.cpus = 2
+        end
+        node.vm.hostname = "kubenode0#{i}"
+        node.vm.network :private_network, ip: IP_NW + "#{NODE_IP_START + i}"
+                node.vm.network "forwarded_port", guest: 22, host: "#{2720 + i}"
 
-# Configure docker daemon
+        node.vm.provision "setup-hosts", :type => "shell", :path => "ubuntu/vagrant/setup-hosts.sh" do |s|
+          s.args = ["enp0s8"]
+        end
 
-cat <<EOF | sudo tee /etc/docker/daemon.json
-{
-  "exec-opts": ["native.cgroupdriver=systemd"],
-  "log-driver": "json-file",
-  "log-opts": {
-    "max-size": "100m"
-  },
-  "storage-driver": "overlay2"
-}
-EOF
-
-sudo systemctl enable docker
-sudo systemctl daemon-reload
-sudo systemctl restart docker
-
-# Install kubeadm kubectl kubelet
-
-sudo curl -fsSLo /usr/share/keyrings/kubernetes-archive-keyring.gpg https://packages.cloud.google.com/apt/doc/apt-key.gpg
-echo "deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list
-sudo apt-get update && sudo apt-get install kubelet kubeadm kubectl -y && sudo apt-mark hold kubelet kubeadm kubectl
+        node.vm.provision "setup-dns", type: "shell", :path => "ubuntu/update-dns.sh"
+    end
+  end
+end
