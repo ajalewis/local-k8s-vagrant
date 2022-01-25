@@ -9,9 +9,9 @@ sed -e '/^.*ubuntu-bionic.*/d' -i /etc/hosts
 
 # Update /etc/hosts about other hosts
 cat >> /etc/hosts <<EOF
-192.168.56.2  master-ashworth
-192.168.56.3  node01-ashworth
-192.168.56.4  node02-ashworth
+192.168.56.2  kubemaster
+192.168.56.3  kubenode01
+192.168.56.4  kubenode02
 EOF
 
 # Update TZ
