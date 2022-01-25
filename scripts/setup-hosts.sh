@@ -37,7 +37,7 @@ sudo sysctl --system
 
 # Install docker run time
 
-sudo apt-get update && sudo apt-get install ca-certificates curl nupg lsb-release apt-transport-https -y
+sudo apt-get update && sudo apt-get install ca-certificates curl gnupg lsb-release apt-transport-https -y
 
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
 
