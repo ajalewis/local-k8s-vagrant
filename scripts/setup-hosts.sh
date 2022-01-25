@@ -47,7 +47,6 @@ sudo apt-get update && sudo apt-get install docker-ce docker-ce-cli containerd.i
 
 # Configure docker daemon
 
-sudo mkdir /etc/docker
 cat <<EOF | sudo tee /etc/docker/daemon.json
 {
   "exec-opts": ["native.cgroupdriver=systemd"],
